@@ -1,106 +1,126 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+import logging
 import os
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InputMediaPhoto
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram.constants import ParseMode
 
-# Токен бота и канал
-TOKEN = os.environ.get("BOT_TOKEN")  # добавьте BOT_TOKEN в переменные Render
-CHANNEL_ID = os.environ.get("CHANNEL_ID")  # добавьте CHANNEL_ID в переменные Render
+# Налаштування (Токен можна вставити сюди або в налаштування хостингу)
+TOKEN = "8076199435:AAG4i6xSDGOULIxGbDSEqW29foW653WiN7g"
+CHANNEL_ID = "@autochopOdessa"
 
-# Временное хранение данных пользователей
-user_data = {}
-# Хранение ID сообщений в канале
-ads_data = {}
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# Районы Одесской области на украинском
-districts = [
-    "Білгород-Дністровський", "Ізмаїл", "Котовськ", "Подільськ",
-    "Роздільна", "Татарбунари", "Одеський район"
-]
+MAKE, MODEL, YEAR, DISTRICT, TOWN, PRICE, DESCRIPTION, PHOTOS, CONTACTS, CONFIRM = range(10)
+DISTRICTS = [["Одеський", "Білгород-Дністровський"], ["Болградський", "Ізмаїльський"], ["Подільський", "Роздільнянський"], ["Березівський"]]
 
-# Старт бота
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_data[user_id] = {}
-    await update.message.reply_text(
-        "Привіт! Давайте створимо оголошення про авто.\nЯ буду задавати питання по черзі."
-    )
-    await ask_brand(update, context)
+    user = update.message.from_user
+    await update.message.reply_text(f"👋 Вітаємо, {user.first_name}!\nНатисніть /new для оголошення.")
 
-# Вопросы по шагам
-async def ask_brand(update, context):
-    await update.message.reply_text("Вкажіть марку авто:")
+async def new_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    context.user_data["photos"] = []
+    await update.message.reply_text("🚗 Марка авто:", reply_markup=ReplyKeyboardRemove())
+    return MAKE
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text
+async def make(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["make"] = update.message.text
+    await update.message.reply_text("Модель:")
+    return MODEL
 
-    if user_id not in user_data:
-        await start(update, context)
-        return
+async def model(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["model"] = update.message.text
+    await update.message.reply_text("Рік:")
+    return YEAR
 
-    data = user_data[user_id]
+async def year(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["year"] = update.message.text
+    markup = ReplyKeyboardMarkup(DISTRICTS, one_time_keyboard=True, resize_keyboard=True)
+    await update.message.reply_text("Район:", reply_markup=markup)
+    return DISTRICT
 
-    if "brand" not in data:
-        data["brand"] = text
-        await update.message.reply_text("Вкажіть модель авто:")
-    elif "model" not in data:
-        data["model"] = text
-        await update.message.reply_text("Вкажіть рік випуску:")
-    elif "year" not in data:
-        data["year"] = text
-        await update.message.reply_text("Вкажіть ціну в доларах:")
-    elif "price" not in data:
-        data["price"] = text
-        await update.message.reply_text("Надішліть фото авто:")
-    elif "photo" not in data:
-        if update.message.photo:
-            data["photo"] = update.message.photo[-1].file_id
-            # Выбираем район
-            buttons = [[InlineKeyboardButton(d, callback_data=d)] for d in districts]
-            reply_markup = InlineKeyboardMarkup(buttons)
-            await update.message.reply_text("Виберіть район:", reply_markup=reply_markup)
+async def district(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["dist"] = update.message.text
+    await update.message.reply_text("Місто/село:")
+    return TOWN
+
+async def town(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["town"] = update.message.text
+    await update.message.reply_text("Ціна ($):")
+    return PRICE
+
+async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["price"] = update.message.text
+    await update.message.reply_text("Опис:")
+    return DESCRIPTION
+
+async def description(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["desc"] = update.message.text
+    await update.message.reply_text("Надішліть до 10 фото. В кінці натисніть ✅ ГОТОВО.")
+    return PHOTOS
+
+async def photos_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.photo:
+        context.user_data["photos"].append(update.message.photo[-1].file_id)
+        markup = ReplyKeyboardMarkup([["✅ ГОТОВО"]], resize_keyboard=True)
+        await update.message.reply_text(f"📸 Фото додано ({len(context.user_data['photos'])}/10)", reply_markup=markup)
+        return PHOTOS
+    elif update.message.text == "✅ ГОТОВО":
+        if not context.user_data.get("photos"):
+            await update.message.reply_text("Додайте фото!")
+            return PHOTOS
+        await update.message.reply_text("📱 Ваш номер телефону (текстом):", reply_markup=ReplyKeyboardRemove())
+        return CONTACTS
+    return PHOTOS
+
+async def contacts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone = update.message.text
+    user = update.message.from_user
+    username = f"@{user.username}" if user.username else f"ID: {user.id}"
+    d = context.user_data
+    caption = (f"🚗 *{d['make']} {d['model']}* ({d['year']})\n📍 {d['dist']} р-н, {d['town']}\n"
+               f"💰 Ціна: {d['price']}$\n📝 {d['desc']}\n📞 {phone}\n👤 {username}")
+    context.user_data["final_text"] = caption
+    await update.message.reply_photo(photo=d["photos"][0], caption=f"Перевірка:\n\n{caption}\n\nОпублікувати? /save", parse_mode=ParseMode.MARKDOWN)
+    return CONFIRM
+
+async def save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    d = context.user_data
+    try:
+        if len(d["photos"]) == 1:
+            await context.bot.send_photo(chat_id=CHANNEL_ID, photo=d["photos"][0], caption=d["final_text"], parse_mode=ParseMode.MARKDOWN)
         else:
-            await update.message.reply_text("Будь ласка, надішліть фото авто:")
-    elif "district" not in data:
-        # Ждём район через CallbackQuery
-        pass
-    elif "city" not in data:
-        data["city"] = text
-        await update.message.reply_text("Напишіть короткий опис авто:")
-    elif "description" not in data:
-        data["description"] = text
-        await publish_ad(update, context)
-    else:
-        await update.message.reply_text("Оголошення вже зібрано, щоб створити нове - /start")
+            media = [InputMediaPhoto(d["photos"][0], caption=d["final_text"], parse_mode=ParseMode.MARKDOWN)]
+            for p in d["photos"][1:]: media.append(InputMediaPhoto(p))
+            await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media)
+        await update.message.reply_text("✅ Опубліковано!")
+    except Exception as e:
+        await update.message.reply_text(f"Помилка: {e}")
+    return ConversationHandler.END
 
-# Обработка выбора района
-async def handle_district(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    data = user_data[user_id]
-    data["district"] = query.data
-    await query.message.reply_text("Вкажіть населений пункт:")
+def main():
+    # Використовуємо змінні оточення для порту (важливо для Render)
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("new", new_ad)],
+        states={
+            MAKE: [MessageHandler(filters.TEXT & ~filters.COMMAND, make)],
+            MODEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, model)],
+            YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, year)],
+            DISTRICT: [MessageHandler(filters.TEXT & ~filters.COMMAND, district)],
+            TOWN: [MessageHandler(filters.TEXT & ~filters.COMMAND, town)],
+            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, price)],
+            DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, description)],
+            PHOTOS: [MessageHandler(filters.PHOTO | filters.Regex("^✅ ГОТОВО$"), photos_handler)],
+            CONTACTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, contacts)],
+            CONFIRM: [CommandHandler("save", save)],
+        },
+        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
+    )
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(conv)
+    app.run_polling()
 
-# Публикация объявления в канал
-async def publish_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    data = user_data[user_id]
-
-    text = f"🚗 Нове оголошення:\n\n" \
-           f"Марка: {data['brand']}\n" \
-           f"Модель: {data['model']}\n" \
-           f"Рік: {data['year']}\n" \
-           f"Ціна: {data['price']}$\n" \
-           f"Район: {data.get('district','')}\n" \
-           f"Населений пункт: {data.get('city','')}\n" \
-           f"Опис: {data.get('description','')}"
-
-    if "photo" in data:
-        msg = await context.bot.send_photo(
-            chat_id=CHANNEL_ID,
-            photo=data["photo"],
-            caption=text
-        )
-    else:
-        msg = await context.bot.sen
+if __name__ == "__main__":
+    main()
