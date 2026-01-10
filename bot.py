@@ -42,10 +42,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🚗 Вітаю в Auto Chop Odessa!\n\nКоманди:\n/new - Створити оголошення\n/my - Мої оголошення (видалення)",
         reply_markup=ReplyKeyboardRemove()
     )
+    return ConversationHandler.END
 
 async def new_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text("Введіть марку авто (наприклад, BMW):")
+    await update.message.reply_text("Введіть марку авто (наприклад, BMW):", reply_markup=ReplyKeyboardRemove())
     return MAKE
 
 async def get_make(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -85,8 +86,8 @@ async def get_district(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['price'] = update.message.text
-    context.user_data['photos'] = [] # Ініціалізація списку фото
-    await update.message.reply_text("Надішліть фото авто. Коли закінчите, обов'язково натисніть або напишіть /done")
+    context.user_data['photos'] = [] 
+    await update.message.reply_text("Надішліть фото авто. Коли закінчите, напишіть або натисніть /done")
     return PHOTOS
 
 async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,13 +97,12 @@ async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('photos'):
-        await update.message.reply_text("Будь ласка, надішліть хоча б одне фото, а потім натисніть /done")
+        await update.message.reply_text("Надішліть хоча б одне фото, а потім /done")
         return PHOTOS
     
     user = update.effective_user
-    contact = f"@{user.username}" if user.username else "не вказано (налаштуйте username)"
+    contact = f"@{user.username}" if user.username else "не вказано"
     
-    # Формуємо текст без символів, які можуть зламати Markdown
     summary = (
         f"🚘 *{context.user_data['make']} {context.user_data['model']}*\n"
         f"📅 Рік: {context.user_data['year']}\n"
@@ -113,38 +113,27 @@ async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 Продавець: {contact}"
     )
     context.user_data['summary'] = summary
-    
-    await update.message.reply_text(
-        f"Ось ваше оголошення:\n\n{summary}\n\nОпублікувати в канал? (Напишіть 'так' або 'ні')",
-        parse_mode=ParseMode.MARKDOWN
-    )
+    await update.message.reply_text(f"Перевірте дані:\n\n{summary}\n\nОпублікувати? (так/ні)", parse_mode=ParseMode.MARKDOWN)
     return CONFIRM
 
 async def confirm_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    decision = update.message.text.lower()
-    if decision == 'так':
+    if update.message.text.lower() == 'так':
         photos = context.user_data['photos']
-        # Відправка першого фото з описом у канал
         msg = await context.bot.send_photo(
             chat_id=CHANNEL_ID,
             photo=photos[0],
             caption=context.user_data['summary'],
             parse_mode=ParseMode.MARKDOWN
         )
-        
-        # Запис у базу для подальшого видалення
         conn = sqlite3.connect('ads.db')
         conn.execute('INSERT INTO ads VALUES (?, ?, ?)', (update.effective_user.id, msg.message_id, context.user_data['summary']))
         conn.commit()
         conn.close()
-        
-        await update.message.reply_text("✅ Опубліковано! Ви можете знайти та видалити його через команду /my")
+        await update.message.reply_text("✅ Опубліковано! Видалити можна через /my")
     else:
-        await update.message.reply_text("Оголошення скасовано.")
-    
+        await update.message.reply_text("Скасовано.")
     return ConversationHandler.END
 
-# --- КЕРУВАННЯ СВОЇМИ ОГОЛОШЕННЯМИ ---
 async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect('ads.db')
     cursor = conn.execute('SELECT msg_id, details FROM ads WHERE user_id = ?', (update.effective_user.id,))
@@ -152,16 +141,12 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     if not ads:
-        await update.message.reply_text("У вас поки немає активних оголошень.")
+        await update.message.reply_text("У вас немає активних оголошень.")
         return
 
     for msg_id, details in ads:
         keyboard = [[InlineKeyboardButton("🗑 Видалити з каналу", callback_data=f"del_{msg_id}")]]
-        await update.message.reply_text(
-            f"Ваше оголошення:\n\n{details}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.MARKDOWN
-        )
+        await update.message.reply_text(f"Ваше оголошення:\n\n{details}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
 async def delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -172,15 +157,13 @@ async def delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.execute('DELETE FROM ads WHERE msg_id = ?', (msg_id,))
         conn.commit()
         conn.close()
-        await query.edit_message_text("✅ Оголошення видалено з каналу та бази.")
-    except Exception:
-        await query.answer("Помилка: Не вдалося видалити. Можливо, пост вже видалено.")
+        await query.edit_message_text("✅ Видалено з каналу!")
+    except:
+        await query.answer("Помилка при видаленні.")
 
 def main():
     init_db()
-    # Запуск сервера для Render
     threading.Thread(target=run_h, daemon=True).start()
-    
     app = ApplicationBuilder().token(TOKEN).build()
     
     conv_handler = ConversationHandler(
@@ -191,4 +174,21 @@ def main():
             YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_year)],
             GEARBOX: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_gearbox)],
             FUEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_fuel)],
-            DRIVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get
+            DRIVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_drive)],
+            DISTRICT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_district)],
+            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_price)],
+            PHOTOS: [CommandHandler('done', done_photos), MessageHandler(filters.PHOTO, get_photos)],
+            CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_post)],
+        },
+        fallbacks=[CommandHandler('start', start)],
+        allow_reentry=True # Це дозволяє натискати /new навіть якщо бот чекає відповіді
+    )
+    
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler('my', my_ads))
+    app.add_handler(conv_handler)
+    app.add_handler(CallbackQueryHandler(delete_callback, pattern='^del_'))
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
