@@ -19,7 +19,7 @@ def run_health_check():
     server.serve_forever()
 
 # --- ВАШ КОД БОТА ---
-TOKEN = "8076199435:AAG4i6xSDGOULIxGbDSEqW29foW653WiN7g"
+TOKEN = "8076199435:AAExPYs4SXOUA-ohjIoG2Wn3KPVU5XvEiGc"
 CHANNEL_ID = "@autochopOdessa"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
