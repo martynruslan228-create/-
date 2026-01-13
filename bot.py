@@ -7,7 +7,7 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKey
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
 
-# --- 1. СЕРВЕР ДЛЯ ПІДТРИМКИ ЖИТТЯ ---
+# --- 1. СЕРВЕР ДЛЯ ПІДТРИМКИ ЖИТТЯ (RENDER) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -24,7 +24,7 @@ TOKEN = "8076199435:AAExPYs4SXOUA-ohjIoG2Wn3KPVU5XvEiGc"
 CHANNEL_ID = "@autochopOdessa"
 DB_PATH = "/tmp/ads.db"
 
-# Етапи діалогу (додано PHONE)
+# Етапи діалогу
 MAKE, MODEL, YEAR, GEARBOX, FUEL, DRIVE, DISTRICT, TOWN, PRICE, DESCRIPTION, PHONE, PHOTOS, CONFIRM = range(13)
 
 GEARBOX_KEYS = [["Механіка", "Автомат"], ["Робот", "Варіатор"]]
@@ -39,13 +39,13 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- 4. ЛОГІКА ---
+# --- 4. ЛОГІКА ДІАЛОГУ ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user.first_name
     await update.message.reply_text(
         f"🚗 <b>Вітаю, {user}!</b>\n\n"
-        f"Я допоможу розмістити оголошення в нашому каналі 👉 <a href='https://t.me/autochopOdessa'>Auto Chop Odessa</a>\n\n"
+        f"Я допоможу розмістити оголошення в нашому каналі 👉 <a href='https://t.me/autochopOdessa'>AutoShop Одесса</a>\n\n"
         "🔹 /new — Створити оголошення\n"
         "🔹 /my — Мої оголошення",
         parse_mode=ParseMode.HTML, disable_web_page_preview=True, reply_markup=ReplyKeyboardRemove()
@@ -84,7 +84,7 @@ async def get_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['drive'] = update.message.text
-    await update.message.reply_text("Оберіть район:", reply_markup=ReplyKeyboardMarkup(DISTRICTS, one_time_keyboard=True, resize_keyboard=True))
+    await update.message.reply_text("Оберіть район Одеської області:", reply_markup=ReplyKeyboardMarkup(DISTRICTS, one_time_keyboard=True, resize_keyboard=True))
     return DISTRICT
 
 async def get_district(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,12 +104,12 @@ async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['description'] = update.message.text
-    await update.message.reply_text("Введіть ваш номер телефону для зв'язку (або напишіть 'ні'):")
+    await update.message.reply_text("Введіть ваш номер телефону (або напишіть 'ні'):")
     return PHONE
 
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['phone'] = update.message.text
-    await update.message.reply_text("Надішліть фото. Коли закінчите, натисніть /done")
+    await update.message.reply_text("Надішліть фото (можна декілька). Після закінчення натисніть /done")
     return PHOTOS
 
 async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -119,7 +119,7 @@ async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('photos'):
-        await update.message.reply_text("Надішліть хоча б одне фото!")
+        await update.message.reply_text("Потрібно хоча б одне фото!")
         return PHOTOS
     
     u = update.effective_user
@@ -185,9 +185,9 @@ async def del_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.execute('DELETE FROM ads WHERE msg_ids = ?', (",".join(m_ids),))
         conn.commit()
         conn.close()
-        await update.callback_query.edit_message_text("Оголошення видалено!")
+        await update.callback_query.edit_message_text("✅ Оголошення видалено!")
     except:
-        await update.callback_query.answer("Помилка видалення")
+        await update.callback_query.answer("Помилка видалення.")
 
 def main():
     init_db()
@@ -199,26 +199,4 @@ def main():
         states={
             MAKE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_make)],
             MODEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_model)],
-            YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_year)],
-            GEARBOX: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_gearbox)],
-            FUEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_fuel)],
-            DRIVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_drive)],
-            DISTRICT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_district)],
-            TOWN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_town)],
-            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_price)],
-            DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_description)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            PHOTOS: [MessageHandler(filters.PHOTO, get_photos), CommandHandler('done', done_photos)],
-            CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_post)],
-        },
-        fallbacks=[]
-    )
-    
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CommandHandler('my', my_ads))
-    app.add_handler(conv)
-    app.add_handler(CallbackQueryHandler(del_callback, pattern='^del_'))
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+            YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_
