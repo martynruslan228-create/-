@@ -7,7 +7,7 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKey
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
 
-# --- 1. СЕРВЕР ДЛЯ ПОДДЕРЖКИ ЖИЗНИ ---
+# --- 1. СЕРВЕР ДЛЯ ПІДТРИМКИ ЖИТТЯ ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -19,39 +19,42 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# --- 2. НАСТРОЙКИ ---
+# --- 2. НАЛАШТУВАННЯ ---
 TOKEN = "8076199435:AAExPYs4SXOUA-ohjIoG2Wn3KPVU5XvEiGc"
 CHANNEL_ID = "@autochopOdessa"
 DB_PATH = "/tmp/ads.db"
 
-# Этапы диалога
-MAKE, MODEL, YEAR, GEARBOX, FUEL, DRIVE, DISTRICT, TOWN, PRICE, DESCRIPTION, PHOTOS, CONFIRM = range(12)
+# Етапи діалогу (додано PHONE)
+MAKE, MODEL, YEAR, GEARBOX, FUEL, DRIVE, DISTRICT, TOWN, PRICE, DESCRIPTION, PHONE, PHOTOS, CONFIRM = range(13)
 
 GEARBOX_KEYS = [["Механіка", "Автомат"], ["Робот", "Варіатор"]]
 FUEL_KEYS = [["Бензин", "Дизель"], ["Газ/Бензин", "Електро"], ["Гібрид"]]
 DRIVE_KEYS = [["Передній", "Задній"], ["Повний"]]
 DISTRICTS = [["Одеський", "Березівський"], ["Білгород-Дністровський"], ["Болградський", "Ізмаїльський"], ["Подільський", "Роздільнянський"]]
 
-# --- 3. БАЗА ДАННЫХ ---
+# --- 3. БАЗА ДАНИХ ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute('CREATE TABLE IF NOT EXISTS ads (user_id INTEGER, msg_ids TEXT, details TEXT)')
     conn.commit()
     conn.close()
 
-# --- 4. ЛОГИКА ---
+# --- 4. ЛОГІКА ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user.first_name
     await update.message.reply_text(
-        f"🚗 <b>Вітаю, {user}!</b>\n\n🔹 /new — Створити оголошення\n🔹 /my — Мої оголошення",
-        parse_mode=ParseMode.HTML, reply_markup=ReplyKeyboardRemove()
+        f"🚗 <b>Вітаю, {user}!</b>\n\n"
+        f"Я допоможу розмістити оголошення в нашому каналі 👉 <a href='https://t.me/autochopOdessa'>Auto Chop Odessa</a>\n\n"
+        "🔹 /new — Створити оголошення\n"
+        "🔹 /my — Мої оголошення",
+        parse_mode=ParseMode.HTML, disable_web_page_preview=True, reply_markup=ReplyKeyboardRemove()
     )
 
 async def new_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data['photos'] = []
-    await update.message.reply_text("Введіть марку авто (напр. Honda):")
+    await update.message.reply_text("Введіть марку авто:")
     return MAKE
 
 async def get_make(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -81,12 +84,12 @@ async def get_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['drive'] = update.message.text
-    await update.message.reply_text("Оберіть район Одеської області:", reply_markup=ReplyKeyboardMarkup(DISTRICTS, one_time_keyboard=True, resize_keyboard=True))
+    await update.message.reply_text("Оберіть район:", reply_markup=ReplyKeyboardMarkup(DISTRICTS, one_time_keyboard=True, resize_keyboard=True))
     return DISTRICT
 
 async def get_district(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['district'] = update.message.text
-    await update.message.reply_text("Тепер напишіть назву вашого населеного пункту (місто/село):", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Вкажіть ваш населений пункт (місто/село):", reply_markup=ReplyKeyboardRemove())
     return TOWN
 
 async def get_town(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,12 +99,17 @@ async def get_town(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['price'] = update.message.text
-    await update.message.reply_text("Додайте опис вашого авто (пробіг, стан, технічні особливості):")
+    await update.message.reply_text("Додайте опис вашого авто:")
     return DESCRIPTION
 
 async def get_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['description'] = update.message.text
-    await update.message.reply_text("Надішліть фото (можна декілька). Коли закінчите, натисніть /done")
+    await update.message.reply_text("Введіть ваш номер телефону для зв'язку (або напишіть 'ні'):")
+    return PHONE
+
+async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['phone'] = update.message.text
+    await update.message.reply_text("Надішліть фото. Коли закінчите, натисніть /done")
     return PHOTOS
 
 async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -111,11 +119,13 @@ async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('photos'):
-        await update.message.reply_text("Будь ласка, надішліть хоча б одне фото.")
+        await update.message.reply_text("Надішліть хоча б одне фото!")
         return PHOTOS
     
     u = update.effective_user
-    contact = f"@{u.username}" if u.username else "не вказано (пишіть у приватні)"
+    username = f"@{u.username}" if u.username else "не вказано"
+    phone_info = context.user_data['phone']
+    
     summary = (
         f"🚘 <b>{context.user_data['make']} {context.user_data['model']}</b>\n"
         f"📅 Рік: {context.user_data['year']}\n"
@@ -124,31 +134,34 @@ async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 {context.user_data['district']} р-н, {context.user_data['town']}\n"
         f"💰 <b>Ціна: {context.user_data['price']}$</b>\n\n"
         f"📝 <b>Опис:</b>\n{context.user_data['description']}\n\n"
-        f"👤 Контакт: {contact}"
+        f"👤 <b>Контакти:</b>\n"
+        f"• Telegram: {username}\n"
     )
+    
+    if phone_info.lower() != 'ні':
+        summary += f"• Тел: {phone_info}"
+
     context.user_data['summary'] = summary
-    await update.message.reply_text(f"<b>Перевірте ваше оголошення:</b>\n\n{summary}\n\nОпублікувати? (так/ні)", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(f"<b>Перевірка:</b>\n\n{summary}\n\nОпублікувати? (так/ні)", parse_mode=ParseMode.HTML)
     return CONFIRM
 
 async def confirm_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.lower() == 'так':
         photos = context.user_data['photos']
-        # Создаем альбом (медиагруппу)
         media = [InputMediaPhoto(photos[0], caption=context.user_data['summary'], parse_mode=ParseMode.HTML)]
-        for p in photos[1:10]: # Лимит Telegram - 10 медиа в группе
+        for p in photos[1:10]:
             media.append(InputMediaPhoto(p))
         
         msgs = await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media)
-        # Сохраняем все ID сообщений альбома, чтобы потом можно было удалить весь пост целиком
         ids_str = ",".join([str(m.message_id) for m in msgs])
         
         conn = sqlite3.connect(DB_PATH)
         conn.execute('INSERT INTO ads VALUES (?, ?, ?)', (update.effective_user.id, ids_str, context.user_data['summary']))
         conn.commit()
         conn.close()
-        await update.message.reply_text("✅ Ваше оголошення успішно опубліковано!")
+        await update.message.reply_text("✅ Опубліковано!")
     else:
-        await update.message.reply_text("Публікацію скасовано. Ви можете почати знову через /new")
+        await update.message.reply_text("Скасовано.")
     return ConversationHandler.END
 
 async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -156,29 +169,25 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor = conn.execute('SELECT msg_ids, details FROM ads WHERE user_id = ?', (update.effective_user.id,))
     ads = cursor.fetchall()
     conn.close()
-    
     if not ads:
         await update.message.reply_text("У вас немає активних оголошень.")
         return
-
     for mids, text in ads:
-        kb = [[InlineKeyboardButton("🗑 Видалити з каналу", callback_data=f"del_{mids}")]]
-        await update.message.reply_text(f"Ваше оголошення:\n\n{text}", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+        kb = [[InlineKeyboardButton("🗑 Видалити", callback_data=f"del_{mids}")]]
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
 
 async def del_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    m_ids = query.data.split('_')[1].split(',')
+    m_ids = update.callback_query.data.split('_')[1].split(',')
     try:
         for mid in m_ids:
             await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=int(mid))
-        
         conn = sqlite3.connect(DB_PATH)
         conn.execute('DELETE FROM ads WHERE msg_ids = ?', (",".join(m_ids),))
         conn.commit()
         conn.close()
-        await query.edit_message_text("✅ Оголошення видалено з каналу!")
+        await update.callback_query.edit_message_text("Оголошення видалено!")
     except:
-        await query.answer("Помилка при видаленні. Можливо, пост уже видалено.")
+        await update.callback_query.answer("Помилка видалення")
 
 def main():
     init_db()
@@ -198,6 +207,7 @@ def main():
             TOWN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_town)],
             PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_price)],
             DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_description)],
+            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
             PHOTOS: [MessageHandler(filters.PHOTO, get_photos), CommandHandler('done', done_photos)],
             CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_post)],
         },
@@ -208,7 +218,6 @@ def main():
     app.add_handler(CommandHandler('my', my_ads))
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(del_callback, pattern='^del_'))
-    
     app.run_polling()
 
 if __name__ == "__main__":
