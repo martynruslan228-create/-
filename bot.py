@@ -19,7 +19,7 @@ def run_health_server():
     server.serve_forever()
 
 # --- КОНФІГУРАЦІЯ ---
-TOKEN = "8076199435:AAFUi2S0RZnkchG1AckKxc-KMRUxoVTLM6w"
+TOKEN = "8076199435:AAFOSQ0Ucvo6DpXUhs7Zy_jXhFZ_P7F3Xrw"
 CHANNEL_ID = "@autochopOdessa"
 DB_PATH = "/tmp/ads.db"
 
