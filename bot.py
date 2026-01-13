@@ -6,7 +6,7 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKey
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
 
-# --- 1. HEALTH SERVER ---
+# --- СЕРВЕР ДЛЯ ПІДТРИМКИ ЖИТТЯ ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -18,13 +18,15 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# --- 2. CONFIG ---
+# --- КОНФІГУРАЦІЯ ---
 TOKEN = "8076199435:AAExPYs4SXOUA-ohjIoG2Wn3KPVU5XvEiGc"
 CHANNEL_ID = "@autochopOdessa"
 DB_PATH = "/tmp/ads.db"
 
+# Етапи анкети
 MAKE, MODEL, YEAR, GEARBOX, FUEL, DRIVE, DISTRICT, TOWN, PRICE, DESCRIPTION, PHOTOS, SHOW_CONTACT, CONFIRM = range(13)
 
+# Кнопки
 MAIN_MENU = [["➕ Нове оголошення"], ["🗂 Мої оголошення"]]
 GEARBOX_KEYS = [["Механіка", "Автомат"], ["Робот", "Варіатор"]]
 FUEL_KEYS = [["Бензин", "Дизель"], ["Газ/Бензин", "Електро"], ["Гібрид"]]
@@ -32,17 +34,17 @@ DRIVE_KEYS = [["Передній", "Задній"], ["Повний"]]
 DISTRICTS = [["Одеський", "Березівський"], ["Білгород-Дністровський"], ["Болградський", "Ізмаїльський"], ["Подільський", "Роздільнянський"]]
 YES_NO = [["Так", "Ні"]]
 
-# --- 3. DATABASE ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute('CREATE TABLE IF NOT EXISTS ads (user_id INTEGER, msg_ids TEXT, details TEXT)')
     conn.commit()
     conn.close()
 
-# --- 4. HANDLERS ---
+# --- ОБРОБНИКИ ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"🚗 <b>Вітаю, {update.effective_user.first_name}!</b>\nОберіть дію на кнопках нижче:",
+        f"🚗 <b>Вітаю, {update.effective_user.first_name}!</b>\nВикористовуйте кнопки для керування:",
         parse_mode=ParseMode.HTML,
         reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True, persistent=True)
     )
@@ -53,9 +55,6 @@ async def new_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['photos'] = []
     await update.message.reply_text("Введіть марку авто:", reply_markup=ReplyKeyboardRemove())
     return MAKE
-
-# ... (інші функції get_make, get_model тощо залишаються такими ж, як у попередньому повідомленні)
-# Для економії місця я наводжу структуру, обов'язково використовуйте повну логіку з минулого кроку
 
 async def get_make(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['make'] = update.message.text
@@ -69,12 +68,12 @@ async def get_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['year'] = update.message.text
-    await update.message.reply_text("Оберіть КПП:", reply_markup=ReplyKeyboardMarkup(GEARBOX_KEYS, one_time_keyboard=True, resize_keyboard=True))
+    await update.message.reply_text("КПП:", reply_markup=ReplyKeyboardMarkup(GEARBOX_KEYS, one_time_keyboard=True, resize_keyboard=True))
     return GEARBOX
 
 async def get_gearbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['gearbox'] = update.message.text
-    await update.message.reply_text("Тип палива:", reply_markup=ReplyKeyboardMarkup(FUEL_KEYS, one_time_keyboard=True, resize_keyboard=True))
+    await update.message.reply_text("Паливо:", reply_markup=ReplyKeyboardMarkup(FUEL_KEYS, one_time_keyboard=True, resize_keyboard=True))
     return FUEL
 
 async def get_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -89,12 +88,12 @@ async def get_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_district(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['district'] = update.message.text
-    await update.message.reply_text("Напишіть місто/село:", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Вкажіть місто/село (напишіть):", reply_markup=ReplyKeyboardRemove())
     return TOWN
 
 async def get_town(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['town'] = update.message.text
-    await update.message.reply_text("Введіть ціну ($):")
+    await update.message.reply_text("Ціна ($):")
     return PRICE
 
 async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,7 +103,7 @@ async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['description'] = update.message.text
-    await update.message.reply_text("Надішліть фото. Після закінчення натисніть /done")
+    await update.message.reply_text("Надішліть фото. Після закінчення — натисніть /done")
     return PHOTOS
 
 async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,7 +113,7 @@ async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('photos'):
-        await update.message.reply_text("Треба хоча б одне фото!")
+        await update.message.reply_text("Додайте хоча б одне фото!")
         return PHOTOS
     await update.message.reply_text("Показувати посилання на ваш профіль?", 
                                    reply_markup=ReplyKeyboardMarkup(YES_NO, one_time_keyboard=True, resize_keyboard=True))
@@ -122,6 +121,7 @@ async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_contact_pref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
+    # Вибір: залишати посилання чи ні
     context.user_data['contact'] = f"@{u.username}" if update.message.text == "Так" and u.username else "приховано"
     
     summary = (
@@ -134,7 +134,7 @@ async def get_contact_pref(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 Контакт: {context.user_data['contact']}"
     )
     context.user_data['summary'] = summary
-    await update.message.reply_text(f"<b>Перевірка:</b>\n\n{summary}\n\nОпублікувати?", 
+    await update.message.reply_text(f"<b>Прев'ю:</b>\n\n{summary}\n\nОпублікувати?", 
                                    reply_markup=ReplyKeyboardMarkup(YES_NO, one_time_keyboard=True, resize_keyboard=True),
                                    parse_mode=ParseMode.HTML)
     return CONFIRM
@@ -144,8 +144,10 @@ async def confirm_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photos = context.user_data['photos']
         media = [InputMediaPhoto(photos[0], caption=context.user_data['summary'], parse_mode=ParseMode.HTML)]
         for p in photos[1:10]: media.append(InputMediaPhoto(p))
+        
         msgs = await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media)
         m_ids = ",".join([str(m.message_id) for m in msgs])
+        
         conn = sqlite3.connect(DB_PATH)
         conn.execute('INSERT INTO ads VALUES (?, ?, ?)', (update.effective_user.id, m_ids, context.user_data['summary']))
         conn.commit()
@@ -161,7 +163,7 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ads = cursor.fetchall()
     conn.close()
     if not ads:
-        await update.message.reply_text("Немає активних оголошень.")
+        await update.message.reply_text("У вас немає оголошень.")
         return
     for mids, text in ads:
         kb = [[InlineKeyboardButton("🗑 Видалити", callback_data=f"del_{mids}")]]
@@ -177,7 +179,7 @@ async def del_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         await update.callback_query.edit_message_text("✅ Видалено!")
     except:
-        await query.answer("Помилка видалення")
+        await update.callback_query.answer("Помилка видалення")
 
 def main():
     init_db()
@@ -214,7 +216,7 @@ def main():
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(del_callback, pattern='^del_'))
     
-    # КЛЮЧОВИЙ МОМЕНТ: drop_pending_updates=True
+    # Видаляє всі "черги" повідомлень, щоб не було конфліктів
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
