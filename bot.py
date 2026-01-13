@@ -1,12 +1,16 @@
 import os
 import sqlite3
 import threading
+import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
 
-# --- СЕРВЕР ДЛЯ ПІДТРИМКИ ЖИТТЯ ---
+# Налаштування логування (щоб бачити помилки в панелі Render)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# --- СЕРВЕР ДЛЯ ПІДТРИМКИ ЖИТТЯ (Health Check) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -16,9 +20,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 def run_health_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    logging.info(f"Health check server started on port {port}")
     server.serve_forever()
 
 # --- КОНФІГУРАЦІЯ ---
+# ВСТАВТЕ СЮДИ ВАШ НОВИЙ ТОКЕН ПІСЛЯ /REVOKE
 TOKEN = "8076199435:AAFOSQ0Ucvo6DpXUhs7Zy_jXhFZ_P7F3Xrw"
 CHANNEL_ID = "@autochopOdessa"
 DB_PATH = "/tmp/ads.db"
@@ -73,151 +79,4 @@ async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_gearbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['gearbox'] = update.message.text
-    await update.message.reply_text("Паливо:", reply_markup=ReplyKeyboardMarkup(FUEL_KEYS, one_time_keyboard=True, resize_keyboard=True))
-    return FUEL
-
-async def get_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['fuel'] = update.message.text
-    await update.message.reply_text("Привід:", reply_markup=ReplyKeyboardMarkup(DRIVE_KEYS, one_time_keyboard=True, resize_keyboard=True))
-    return DRIVE
-
-async def get_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['drive'] = update.message.text
-    await update.message.reply_text("Оберіть район:", reply_markup=ReplyKeyboardMarkup(DISTRICTS, one_time_keyboard=True, resize_keyboard=True))
-    return DISTRICT
-
-async def get_district(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['district'] = update.message.text
-    await update.message.reply_text("Вкажіть місто/село (напишіть):", reply_markup=ReplyKeyboardRemove())
-    return TOWN
-
-async def get_town(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['town'] = update.message.text
-    await update.message.reply_text("Ціна ($):")
-    return PRICE
-
-async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['price'] = update.message.text
-    await update.message.reply_text("Додайте опис:")
-    return DESCRIPTION
-
-async def get_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['description'] = update.message.text
-    await update.message.reply_text("Надішліть фото. Після закінчення — натисніть /done")
-    return PHOTOS
-
-async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.photo:
-        context.user_data['photos'].append(update.message.photo[-1].file_id)
-    return PHOTOS
-
-async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get('photos'):
-        await update.message.reply_text("Додайте хоча б одне фото!")
-        return PHOTOS
-    await update.message.reply_text("Показувати посилання на ваш профіль?", 
-                                   reply_markup=ReplyKeyboardMarkup(YES_NO, one_time_keyboard=True, resize_keyboard=True))
-    return SHOW_CONTACT
-
-async def get_contact_pref(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    # Вибір: залишати посилання чи ні
-    context.user_data['contact'] = f"@{u.username}" if update.message.text == "Так" and u.username else "приховано"
-    
-    summary = (
-        f"🚘 <b>{context.user_data['make']} {context.user_data['model']}</b>\n"
-        f"📅 Рік: {context.user_data['year']}\n"
-        f"⚙️ КПП: {context.user_data['gearbox']} | ⛽️ {context.user_data['fuel']}\n"
-        f"📍 {context.user_data['district']} р-н, {context.user_data['town']}\n"
-        f"💰 <b>Ціна: {context.user_data['price']}$</b>\n\n"
-        f"📝 <b>Опис:</b> {context.user_data['description']}\n"
-        f"👤 Контакт: {context.user_data['contact']}"
-    )
-    context.user_data['summary'] = summary
-    await update.message.reply_text(f"<b>Прев'ю:</b>\n\n{summary}\n\nОпублікувати?", 
-                                   reply_markup=ReplyKeyboardMarkup(YES_NO, one_time_keyboard=True, resize_keyboard=True),
-                                   parse_mode=ParseMode.HTML)
-    return CONFIRM
-
-async def confirm_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "Так":
-        photos = context.user_data['photos']
-        media = [InputMediaPhoto(photos[0], caption=context.user_data['summary'], parse_mode=ParseMode.HTML)]
-        for p in photos[1:10]: media.append(InputMediaPhoto(p))
-        
-        msgs = await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media)
-        m_ids = ",".join([str(m.message_id) for m in msgs])
-        
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute('INSERT INTO ads VALUES (?, ?, ?)', (update.effective_user.id, m_ids, context.user_data['summary']))
-        conn.commit()
-        conn.close()
-        await update.message.reply_text("✅ Опубліковано!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
-    else:
-        await update.message.reply_text("Скасовано.", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
-    return ConversationHandler.END
-
-async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.execute('SELECT msg_ids, details FROM ads WHERE user_id = ?', (update.effective_user.id,))
-    ads = cursor.fetchall()
-    conn.close()
-    if not ads:
-        await update.message.reply_text("У вас немає оголошень.")
-        return
-    for mids, text in ads:
-        kb = [[InlineKeyboardButton("🗑 Видалити", callback_data=f"del_{mids}")]]
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
-
-async def del_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mids = update.callback_query.data.split('_')[1].split(',')
-    try:
-        for m_id in mids: await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=int(m_id))
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute('DELETE FROM ads WHERE msg_ids = ?', (",".join(mids),))
-        conn.commit()
-        conn.close()
-        await update.callback_query.edit_message_text("✅ Видалено!")
-    except:
-        await update.callback_query.answer("Помилка видалення")
-
-def main():
-    init_db()
-    threading.Thread(target=run_health_server, daemon=True).start()
-    app = ApplicationBuilder().token(TOKEN).build()
-    
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(MessageHandler(filters.Regex("^🗂 Мої оголошення$"), my_ads))
-
-    conv = ConversationHandler(
-        entry_points=[
-            CommandHandler('new', new_ad),
-            MessageHandler(filters.Regex("^➕ Нове оголошення$"), new_ad)
-        ],
-        states={
-            MAKE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_make)],
-            MODEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_model)],
-            YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_year)],
-            GEARBOX: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_gearbox)],
-            FUEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_fuel)],
-            DRIVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_drive)],
-            DISTRICT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_district)],
-            TOWN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_town)],
-            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_price)],
-            DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_description)],
-            PHOTOS: [MessageHandler(filters.PHOTO, get_photos), CommandHandler('done', done_photos)],
-            SHOW_CONTACT: [MessageHandler(filters.Regex("^(Так|Ні)$"), get_contact_pref)],
-            CONFIRM: [MessageHandler(filters.Regex("^(Так|Ні)$"), confirm_post)],
-        },
-        fallbacks=[CommandHandler('start', start)],
-        allow_reentry=True
-    )
-    
-    app.add_handler(conv)
-    app.add_handler(CallbackQueryHandler(del_callback, pattern='^del_'))
-    
-    # Видаляє всі "черги" повідомлень, щоб не було конфліктів
-    app.run_polling(drop_pending_updates=True)
-
-if __name__ == "__main__":
-    main()
+    await update.message
