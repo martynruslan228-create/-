@@ -6,7 +6,7 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKey
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
 
-# --- 1. СЕРВЕР ДЛЯ ПОДДЕРЖКИ ЖИЗНИ ---
+# --- 1. HEALTH SERVER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -18,15 +18,13 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# --- 2. НАСТРОЙКИ ---
+# --- 2. CONFIG ---
 TOKEN = "8076199435:AAExPYs4SXOUA-ohjIoG2Wn3KPVU5XvEiGc"
 CHANNEL_ID = "@autochopOdessa"
 DB_PATH = "/tmp/ads.db"
 
-# Этапы диалога
 MAKE, MODEL, YEAR, GEARBOX, FUEL, DRIVE, DISTRICT, TOWN, PRICE, DESCRIPTION, PHOTOS, SHOW_CONTACT, CONFIRM = range(13)
 
-# Клавиатуры
 MAIN_MENU = [["➕ Нове оголошення"], ["🗂 Мої оголошення"]]
 GEARBOX_KEYS = [["Механіка", "Автомат"], ["Робот", "Варіатор"]]
 FUEL_KEYS = [["Бензин", "Дизель"], ["Газ/Бензин", "Електро"], ["Гібрид"]]
@@ -34,19 +32,17 @@ DRIVE_KEYS = [["Передній", "Задній"], ["Повний"]]
 DISTRICTS = [["Одеський", "Березівський"], ["Білгород-Дністровський"], ["Болградський", "Ізмаїльський"], ["Подільський", "Роздільнянський"]]
 YES_NO = [["Так", "Ні"]]
 
-# --- 3. БАЗА ДАННЫХ ---
+# --- 3. DATABASE ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute('CREATE TABLE IF NOT EXISTS ads (user_id INTEGER, msg_ids TEXT, details TEXT)')
     conn.commit()
     conn.close()
 
-# --- 4. ЛОГИКА ---
-
+# --- 4. HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Эта команда теперь сбрасывает любой активный диалог
     await update.message.reply_text(
-        f"🚗 <b>Вітаю, {update.effective_user.first_name}!</b>\nВиберіть дію на кнопках нижче:",
+        f"🚗 <b>Вітаю, {update.effective_user.first_name}!</b>\nОберіть дію на кнопках нижче:",
         parse_mode=ParseMode.HTML,
         reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True, persistent=True)
     )
@@ -55,8 +51,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def new_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data['photos'] = []
-    await update.message.reply_text("Введіть марку авто (або натисніть /start для скасування):", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Введіть марку авто:", reply_markup=ReplyKeyboardRemove())
     return MAKE
+
+# ... (інші функції get_make, get_model тощо залишаються такими ж, як у попередньому повідомленні)
+# Для економії місця я наводжу структуру, обов'язково використовуйте повну логіку з минулого кроку
 
 async def get_make(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['make'] = update.message.text
@@ -65,7 +64,7 @@ async def get_make(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['model'] = update.message.text
-    await update.message.reply_text("Введіть рік випуску:")
+    await update.message.reply_text("Введіть рік:")
     return YEAR
 
 async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -90,7 +89,7 @@ async def get_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_district(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['district'] = update.message.text
-    await update.message.reply_text("Вкажіть місто/село (напишіть):", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Напишіть місто/село:", reply_markup=ReplyKeyboardRemove())
     return TOWN
 
 async def get_town(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,7 +104,7 @@ async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['description'] = update.message.text
-    await update.message.reply_text("Надішліть фото (по одному). Коли закінчите — натисніть /done")
+    await update.message.reply_text("Надішліть фото. Після закінчення натисніть /done")
     return PHOTOS
 
 async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -123,10 +122,7 @@ async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_contact_pref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
-    if update.message.text == "Так":
-        context.user_data['contact'] = f"@{u.username}" if u.username else "Контакт доступний"
-    else:
-        context.user_data['contact'] = "приховано"
+    context.user_data['contact'] = f"@{u.username}" if update.message.text == "Так" and u.username else "приховано"
     
     summary = (
         f"🚘 <b>{context.user_data['make']} {context.user_data['model']}</b>\n"
@@ -165,7 +161,7 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ads = cursor.fetchall()
     conn.close()
     if not ads:
-        await update.message.reply_text("Немає оголошень.")
+        await update.message.reply_text("Немає активних оголошень.")
         return
     for mids, text in ads:
         kb = [[InlineKeyboardButton("🗑 Видалити", callback_data=f"del_{mids}")]]
@@ -179,22 +175,18 @@ async def del_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.execute('DELETE FROM ads WHERE msg_ids = ?', (",".join(mids),))
         conn.commit()
         conn.close()
-        await update.callback_query.edit_message_text("🗑 Видалено з каналу!")
+        await update.callback_query.edit_message_text("✅ Видалено!")
     except:
-        await update.callback_query.answer("Помилка видалення")
+        await query.answer("Помилка видалення")
 
 def main():
     init_db()
     threading.Thread(target=run_health_server, daemon=True).start()
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # ПРИОРИТЕТ 1: Команда /start должна работать ВСЕГДА
     app.add_handler(CommandHandler('start', start))
-    
-    # ПРИОРИТЕТ 2: Кнопка "Мої оголошення"
     app.add_handler(MessageHandler(filters.Regex("^🗂 Мої оголошення$"), my_ads))
 
-    # ПРИОРИТЕТ 3: Диалог создания объявления
     conv = ConversationHandler(
         entry_points=[
             CommandHandler('new', new_ad),
@@ -216,13 +208,14 @@ def main():
             CONFIRM: [MessageHandler(filters.Regex("^(Так|Ні)$"), confirm_post)],
         },
         fallbacks=[CommandHandler('start', start)],
-        allow_reentry=True # Позволяет начать заново, если нажали "Новое" еще раз
+        allow_reentry=True
     )
     
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(del_callback, pattern='^del_'))
     
-    app.run_polling()
+    # КЛЮЧОВИЙ МОМЕНТ: drop_pending_updates=True
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
