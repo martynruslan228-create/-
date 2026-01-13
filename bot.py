@@ -1,30 +1,20 @@
-print("Скрипт розпочав роботу...")
+        print("Скрипт розпочав роботу...")
 
 import os
 import sqlite3
 import threading
 import logging
-import sys
-
-# Спроба імпорту бібліотеки з виводом помилки в логи
-try:
-    from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-    from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
-    from telegram.constants import ParseMode
-except ImportError as e:
-    print(f"Критична помилка: Бібліотеку python-telegram-bot не знайдено! {e}")
-    sys.exit(1)
-
+import asyncio
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
+from telegram.constants import ParseMode
 
 # 1. НАЛАШТУВАННЯ ЛОГУВАННЯ
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 2. HEALTH CHECK СЕРВЕР
+# 2. HEALTH CHECK (для Render)
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -34,13 +24,12 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 def run_health_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    logger.info(f"Health check запуск на порту {port}")
     server.serve_forever()
 
 # 3. КОНФІГУРАЦІЯ
 TOKEN = "8076199435:AAFOSQ0Ucvo6DpXUhs7Zy_jXhFZ_P7F3Xrw"
 CHANNEL_ID = "@autochopOdessa"
-DB_PATH = "ads.db" # Змінив шлях на локальний для стабільності
+DB_PATH = "ads.db"
 
 # Етапи анкети
 MAKE, MODEL, YEAR, GEARBOX, FUEL, DRIVE, DISTRICT, TOWN, PRICE, DESCRIPTION, PHOTOS, SHOW_CONTACT, CONFIRM = range(13)
@@ -54,20 +43,18 @@ DISTRICTS = [["Одеський", "Березівський"], ["Білгоро�
 YES_NO = [["Так", "Ні"]]
 
 def init_db():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute('CREATE TABLE IF NOT EXISTS ads (user_id INTEGER, msg_ids TEXT, details TEXT)')
-        conn.commit()
-        conn.close()
-        logger.info("База даних ініціалізована.")
-    except Exception as e:
-        logger.error(f"Помилка БД: {e}")
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute('CREATE TABLE IF NOT EXISTS ads (user_id INTEGER, msg_ids TEXT, details TEXT)')
+    conn.commit()
+    conn.close()
 
-# --- ОБРОБНИКИ (Скорочено для стабільності) ---
+# --- ОБРОБНИКИ ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"🚗 Вітаю, {update.effective_user.first_name}!",
-        reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
+        f"🚗 <b>Вітаю, {update.effective_user.first_name}!</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True, persistent=True)
     )
     return ConversationHandler.END
 
@@ -119,12 +106,12 @@ async def get_town(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['price'] = update.message.text
-    await update.message.reply_text("Опис:")
+    await update.message.reply_text("Додайте опис:")
     return DESCRIPTION
 
 async def get_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['description'] = update.message.text
-    await update.message.reply_text("Надішліть фото, потім /done")
+    await update.message.reply_text("Надішліть фото, після закінчення — /done")
     return PHOTOS
 
 async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -133,28 +120,33 @@ async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return PHOTOS
 
 async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('photos'):
+        await update.message.reply_text("Додайте фото!")
+        return PHOTOS
     await update.message.reply_text("Показувати контакт?", reply_markup=ReplyKeyboardMarkup(YES_NO, resize_keyboard=True))
     return SHOW_CONTACT
 
 async def get_contact_pref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     context.user_data['contact'] = f"@{u.username}" if update.message.text == "Так" and u.username else "приховано"
-    summary = f"🚘 {context.user_data['make']} {context.user_data['model']}\n💰 Ціна: {context.user_data['price']}$"
+    summary = f"🚘 <b>{context.user_data['make']} {context.user_data['model']}</b>\n💰 Ціна: {context.user_data['price']}$"
     context.user_data['summary'] = summary
-    await update.message.reply_text(f"Прев'ю:\n{summary}\n\nОпублікувати?", reply_markup=ReplyKeyboardMarkup(YES_NO, resize_keyboard=True))
+    await update.message.reply_text(f"Прев'ю:\n{summary}\n\nОпублікувати?", reply_markup=ReplyKeyboardMarkup(YES_NO, resize_keyboard=True), parse_mode=ParseMode.HTML)
     return CONFIRM
 
 async def confirm_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "Так":
         photos = context.user_data['photos']
-        media = [InputMediaPhoto(photos[0], caption=context.user_data['summary'])]
+        media = [InputMediaPhoto(photos[0], caption=context.user_data['summary'], parse_mode=ParseMode.HTML)]
         for p in photos[1:10]: media.append(InputMediaPhoto(p))
         await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media)
-        await update.message.reply_text("✅ Готово!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
+        await update.message.reply_text("✅ Опубліковано!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
     return ConversationHandler.END
 
 async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Функція перегляду в розробці.")
+    await update.message.reply_text("Ця функція скоро з'явиться.")
+
+# --- ЗАПУСК ---
 
 def main():
     init_db()
@@ -162,6 +154,9 @@ def main():
     
     app = ApplicationBuilder().token(TOKEN).build()
     
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(MessageHandler(filters.Regex("^🗂 Мої оголошення$"), my_ads))
+
     conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Нове оголошення$"), new_ad)],
         states={
@@ -182,12 +177,11 @@ def main():
         fallbacks=[CommandHandler('start', start)]
     )
     
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(MessageHandler(filters.Regex("^🗂 Мої оголошення$"), my_ads))
     app.add_handler(conv)
     
-    logger.info("Бот запускається через Polling...")
-    app.run_polling(drop_pending_updates=True)
+    logger.info("Бот готовий.")
+    # Використовуємо спеціальні параметри для Render
+    app.run_polling(drop_pending_updates=True, close_loop=False)
 
 if __name__ == "__main__":
     main()
