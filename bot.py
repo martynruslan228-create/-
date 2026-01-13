@@ -5,9 +5,12 @@ import sqlite3
 import threading
 import logging
 import asyncio
+import sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
+from telegram.error import Conflict
 
 # 1. НАЛАШТУВАННЯ
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -33,12 +36,11 @@ SKIP_KEY = [["➡️ Залишити як є"]]
 # 2. БАЗА ДАНИХ
 def init_db():
     conn = sqlite3.connect(DB_PATH)
-    conn.execute('CREATE TABLE IF NOT EXISTS ads (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, msg_ids TEXT, details TEXT, full_data TEXT)')
+    conn.execute('CREATE TABLE IF NOT EXISTS ads (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, msg_ids TEXT, details TEXT)')
     conn.commit()
     conn.close()
 
 # 3. HEALTH CHECK ДЛЯ RENDER
-from http.server import HTTPServer, BaseHTTPRequestHandler
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -47,9 +49,10 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
 def run_health_server():
     port = int(os.environ.get("PORT", 8080))
-    HTTPServer(('0.0.0.0', port), HealthCheckHandler).serve_forever()
+    httpd = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    httpd.serve_forever()
 
-# 4. ЛОГІКА ОГОЛОШЕННЯ
+# 4. ЛОГІКА ТЕКСТУ
 def generate_full_text(data):
     tg = f"@{data['username']}" if data.get('show_tg') == "Так" and data.get('username') else "приховано"
     return (
@@ -63,6 +66,8 @@ def generate_full_text(data):
         f"📞 Тел: <code>{data['phone']}</code>\n"
         f"👤 Telegram: {tg}"
     )
+
+# --- ОБРОБНИКИ ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🚗 Вітаю!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
@@ -84,11 +89,9 @@ async def edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text("🔧 Режим редагування. Введіть нову марку:", reply_markup=ReplyKeyboardMarkup(SKIP_KEY, resize_keyboard=True))
     return MAKE
 
-# Універсальний крок
 async def step_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, key, next_st, msg, kb=None):
     if update.message.text != "➡️ Залишити як є":
         context.user_data[key] = update.message.text
-    
     markup = kb if kb else (ReplyKeyboardMarkup(SKIP_KEY, resize_keyboard=True) if context.user_data.get('is_edit') else ReplyKeyboardRemove())
     await update.message.reply_text(msg, reply_markup=markup)
     return next_st
@@ -141,22 +144,18 @@ async def final_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "Так":
         if context.user_data.get('is_edit'):
             await del_logic(context.user_data['old_ad_id'], context)
-        
         photos = context.user_data['photos']
         media = [InputMediaPhoto(photos[0], caption=context.user_data['full_text'], parse_mode=ParseMode.HTML)]
         for p in photos[1:10]: media.append(InputMediaPhoto(p))
-        
         msgs = await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media)
         m_ids = ",".join([str(m.message_id) for m in msgs])
-        
         conn = sqlite3.connect(DB_PATH)
         conn.execute('INSERT INTO ads (user_id, msg_ids, details) VALUES (?, ?, ?)', (update.effective_user.id, m_ids, context.user_data['full_text']))
         conn.commit()
         conn.close()
-        await update.message.reply_text("✅ Опубліковано!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
+        await update.message.reply_text("✅ Готово!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
     return ConversationHandler.END
 
-# 5. КЕРУВАННЯ
 async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute('SELECT id, details FROM ads WHERE user_id = ?', (update.effective_user.id,)).fetchall()
@@ -181,11 +180,13 @@ async def cb_del(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await del_logic(update.callback_query.data.split('_')[1], context)
     await update.callback_query.edit_message_text("🗑 Видалено")
 
-# 6. ЗАПУСК
+# --- СТАРТ ---
+
 def main():
     init_db()
     threading.Thread(target=run_health_server, daemon=True).start()
-    app = ApplicationBuilder().token(TOKEN).build()
+    
+    app = ApplicationBuilder().token(TOKEN).read_timeout(30).write_timeout(30).build()
 
     conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Нове оголошення$"), new_ad), CallbackQueryHandler(edit_start, pattern="^edt_")],
@@ -205,7 +206,8 @@ def main():
             SHOW_CONTACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_tg)],
             CONFIRM: [MessageHandler(filters.Regex("^(Так|Ні)$"), final_post)],
         },
-        fallbacks=[CommandHandler('start', start)]
+        fallbacks=[CommandHandler('start', start)],
+        allow_reentry=True
     )
 
     app.add_handler(CommandHandler('start', start))
@@ -213,8 +215,15 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_del, pattern="^del_"))
     app.add_handler(conv)
 
-    # ВАЖЛИВО ДЛЯ УСУНЕННЯ КОНФЛІКТУ:
-    app.run_polling(drop_pending_updates=True, close_loop=False)
+    print("Запуск Polling...")
+    try:
+        app.run_polling(drop_pending_updates=True, close_loop=False)
+    except Conflict:
+        print("Помилка Conflict: спроба перезапуску через 5 секунд...")
+        import time
+        time.sleep(5)
+        sys.exit(1) # Render сам перезапустить скрипт
 
 if __name__ == "__main__":
     main()
+     
