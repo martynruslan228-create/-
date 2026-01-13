@@ -11,11 +11,13 @@ from telegram.constants import ParseMode
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header('Content-type', 'text/plain') # Змінено на простий текст
+        self.send_header('Content-Length', '2') # Чітко вказуємо мінімальний розмір
         self.end_headers()
-        self.wfile.write(b"Bot is Running")
+        self.wfile.write(b"OK") # Відповідь лише 2 літери
 
-def run_health_server():
-    port = int(os.environ.get("PORT", 8080))
+    def log_message(self, format, *args):
+        return # Вимикаємо зайві логи
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
