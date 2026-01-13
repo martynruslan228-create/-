@@ -26,7 +26,7 @@ DB_PATH = "/tmp/ads.db"
 # Этапы диалога
 MAKE, MODEL, YEAR, GEARBOX, FUEL, DRIVE, DISTRICT, TOWN, PRICE, DESCRIPTION, PHOTOS, SHOW_CONTACT, CONFIRM = range(13)
 
-# Клавиатуры
+# Клавиатуры (Главное меню теперь всегда доступно)
 MAIN_MENU = [["➕ Нове оголошення"], ["🗂 Мої оголошення"]]
 GEARBOX_KEYS = [["Механіка", "Автомат"], ["Робот", "Варіатор"]]
 FUEL_KEYS = [["Бензин", "Дизель"], ["Газ/Бензин", "Електро"], ["Гібрид"]]
@@ -44,16 +44,19 @@ def init_db():
 # --- 4. ЛОГИКА ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Принудительно отправляем кнопки меню
     await update.message.reply_text(
-        f"🚗 <b>Вітаю, {update.effective_user.first_name}!</b>\nСкористайтеся кнопками меню нижче:",
+        f"🚗 <b>Вітаю, {update.effective_user.first_name}!</b>\n\nВикористовуйте кнопки нижче для керування ботом:",
         parse_mode=ParseMode.HTML,
-        reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True, persistent=True)
     )
+    return ConversationHandler.END
 
 async def new_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data['photos'] = []
-    await update.message.reply_text("Введіть марку авто:", reply_markup=ReplyKeyboardRemove())
+    # Убираем меню на время заполнения анкеты
+    await update.message.reply_text("Введіть марку авто (напр. Honda):", reply_markup=ReplyKeyboardRemove())
     return MAKE
 
 async def get_make(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -88,7 +91,7 @@ async def get_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_district(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['district'] = update.message.text
-    await update.message.reply_text("Напишіть місто/село:", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Напишіть місто/село (вручну):", reply_markup=ReplyKeyboardRemove())
     return TOWN
 
 async def get_town(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,7 +106,7 @@ async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['description'] = update.message.text
-    await update.message.reply_text("Надішліть фото (до 10 шт). Потім натисніть /done")
+    await update.message.reply_text("Надішліть фото. Коли закінчите, натисніть /done")
     return PHOTOS
 
 async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,16 +118,16 @@ async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('photos'):
         await update.message.reply_text("Надішліть хоча б одне фото!")
         return PHOTOS
-    await update.message.reply_text("Показувати посилання на ваш Telegram профіль?", 
+    await update.message.reply_text("Показувати посилання на ваш профіль?", 
                                    reply_markup=ReplyKeyboardMarkup(YES_NO, one_time_keyboard=True, resize_keyboard=True))
     return SHOW_CONTACT
 
 async def get_contact_pref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     if update.message.text == "Так":
-        context.user_data['contact'] = f"@{u.username}" if u.username else "Контакт не приховано, але username відсутній"
+        context.user_data['contact'] = f"@{u.username}" if u.username else "username приховано в налаштуваннях ТГ"
     else:
-        context.user_data['contact'] = "приховано (пишіть через профіль каналу)"
+        context.user_data['contact'] = "приховано"
     
     summary = (
         f"🚘 <b>{context.user_data['make']} {context.user_data['model']}</b>\n"
@@ -189,7 +192,11 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
     
     conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^➕ Нове оголошення$") | CommandHandler('new'), new_ad)],
+        entry_points=[
+            # Теперь реагирует и на команду, и на кнопку
+            CommandHandler('new', new_ad),
+            MessageHandler(filters.Regex("^➕ Нове оголошення$"), new_ad)
+        ],
         states={
             MAKE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_make)],
             MODEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_model)],
@@ -209,10 +216,13 @@ def main():
     )
     
     app.add_handler(CommandHandler('start', start))
+    # Обработка кнопки "Мои объявления" вне диалога
     app.add_handler(MessageHandler(filters.Regex("^🗂 Мої оголошення$"), my_ads))
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(del_callback, pattern='^del_'))
+    
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+    
