@@ -17,7 +17,7 @@ TOKEN = "8076199435:AAHJ8hnLJaKvVl7DIhKiKZBi2aAFCg5ddEE"
 CHANNEL_ID = "@autochopOdessa"
 DB_PATH = "ads.db"
 
-# Стейт-машина (усі змінні чітко визначені)
+# Стейт-машина
 (MAKE, MODEL, YEAR, GEARBOX, FUEL, DRIVE, DISTRICT, TOWN, PRICE, 
  DESCRIPTION, PHOTOS, PHONE, SHOW_CONTACT, CONFIRM) = range(14)
 
@@ -89,7 +89,7 @@ async def delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
     await query.answer("Оголошення видалено")
-    await query.edit_message_text(text="🗑 Це оголошення було видалено зі списку.")
+    await query.edit_message_text(text="🗑 Це оголошення було видалено.")
 
 # --- ДІАЛОГ СТВОРЕННЯ ОГОЛОШЕННЯ ---
 
@@ -146,7 +146,7 @@ async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['description'] = update.message.text
-    await update.message.reply_text("Надішліть фото та натисніть /done або кнопку нижче:", 
+    await update.message.reply_text("Надішліть фото та натисніть /done. Якщо фото немає — кнопка нижче:", 
                                    reply_markup=ReplyKeyboardMarkup(SKIP_KEY, resize_keyboard=True))
     return PHOTOS
 
@@ -175,85 +175,4 @@ async def get_tg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def final_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "Так":
         photos = context.user_data.get('photos', [])
-        caption = context.user_data['summary']
-        try:
-            if not photos:
-                await context.bot.send_message(chat_id=CHANNEL_ID, text=caption, parse_mode=ParseMode.HTML)
-            elif len(photos) == 1:
-                await context.bot.send_photo(chat_id=CHANNEL_ID, photo=photos[0], caption=caption, parse_mode=ParseMode.HTML)
-            else:
-                media = [InputMediaPhoto(photos[0], caption=caption, parse_mode=ParseMode.HTML)]
-                for p in photos[1:10]:
-                    media.append(InputMediaPhoto(p))
-                await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media)
-            
-            conn = sqlite3.connect(DB_PATH)
-            conn.execute('INSERT INTO ads (user_id, msg_ids, details) VALUES (?, ?, ?)', (update.effective_user.id, "0", caption))
-            conn.commit()
-            conn.close()
-
-            await update.message.reply_text("✅ Опубліковано!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
-        except Exception as e:
-            await update.message.reply_text(f"❌ Помилка: {e}")
-    else:
-        await update.message.reply_text("Скасовано.", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
-    return ConversationHandler.END
-
-# --- СЕРВЕР HEALTH CHECK ---
-
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(b"Bot is alive")
-    def log_message(self, format, *args):
-        return
-
-def run_server():
-    port = int(os.environ.get("PORT", 8080))
-    HTTPServer(('0.0.0.0', port), HealthHandler).serve_forever()
-
-# --- СТАРТ ---
-
-async def main():
-    init_db()
-    threading.Thread(target=run_server, daemon=True).start()
-    
-    app = ApplicationBuilder().token(TOKEN).build()
-    
-    conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^➕ Нове оголошення$"), new_ad)],
-        states={
-            MAKE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_make)],
-            MODEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_model)],
-            YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_year)],
-            GEARBOX: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_gearbox)],
-            FUEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_fuel)],
-            DRIVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_drive)],
-            DISTRICT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_district)],
-            TOWN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_town)],
-            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_price)],
-            DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_desc)],
-            PHOTOS: [MessageHandler(filters.PHOTO, get_photos), CommandHandler('done', done_photos), MessageHandler(filters.Regex("^➡️ Залишити як є$"), done_photos)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            SHOW_CONTACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_tg)],
-            CONFIRM: [MessageHandler(filters.Regex("^(Так|Ні)$"), final_post)],
-        },
-        fallbacks=[CommandHandler('start', start)]
-    )
-    
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(MessageHandler(filters.Regex("^🗂 Мої оголошення$"), my_ads))
-    app.add_handler(CallbackQueryHandler(delete_callback, pattern="^del_"))
-    app.add_handler(conv)
-    
-    await app.initialize()
-    await app.bot.delete_webhook(drop_pending_updates=True)
-    await app.updater.start_polling(drop_pending_updates=True)
-    logger.info("Бот готовий!")
-    await asyncio.Event().wait()
-
-if __name__ == "__main__":
-    asyncio.run(main())
- 
+        caption = context.user
