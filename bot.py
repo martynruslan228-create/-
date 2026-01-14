@@ -2,13 +2,12 @@ import os
 import sqlite3
 import threading
 import logging
-import asyncio
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
 
-# 1. НАЛАШТУВАННЯ ЛОГУВАННЯ
+# 1. ЛОГУВАННЯ
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -17,14 +16,24 @@ TOKEN = "8076199435:AAHJ8hnLJaKvVl7DIhKiKZBi2aAFCg5ddEE"
 CHANNEL_ID = "@autochopOdessa"
 DB_PATH = "ads.db"
 
-# Стейт-машина (етапи)
+# Етапи діалогу
 (MAKE, MODEL, YEAR, GEARBOX, FUEL, DRIVE, DISTRICT, TOWN, PRICE, 
  DESCRIPTION, PHOTOS, PHONE, SHOW_CONTACT, CONFIRM) = range(14)
 
 # Клавіатури
 MAIN_MENU = [["➕ Нове оголошення"], ["🗂 Мої оголошення"]]
-SKIP_KEY = [["➡️ Залишити як є"]]
+GEARBOX_KEYS = [["Механіка", "Автомат"], ["Робот", "Варіатор"]]
+FUEL_KEYS = [["Бензин", "Дизель"], ["Газ/Бензин", "Електро"], ["Гібрид"]]
+DRIVE_KEYS = [["Передній", "Задній", "Повний"]]
+# Повний список районів Одеської області
+DISTRICT_KEYS = [
+    ["Одеський", "Березівський"],
+    ["Білгород-Дністровський", "Болградський"],
+    ["Ізмаїльський", "Подільський"],
+    ["Роздільнянський"]
+]
 YES_NO = [["Так", "Ні"]]
+SKIP_KEY = [["➡️ Залишити як є"]]
 
 # 3. БАЗА ДАНИХ
 def init_db():
@@ -39,67 +48,97 @@ def generate_summary(data):
         f"🚘 <b>{data['make']} {data['model']}</b>\n"
         f"📅 Рік: {data['year']}\n"
         f"⚙️ КПП: {data['gearbox']} | ⛽️ {data['fuel']}\n"
-        f"📍 {data.get('district', 'Не вказано')} р-н, {data.get('town', 'Не вказано')}\n"
+        f"🛣 Привід: {data['drive']}\n"
+        f"📍 {data['district']} р-н, {data['town']}\n"
         f"💰 <b>Ціна: {data['price']}$</b>\n\n"
         f"📝 <b>Опис:</b> {data['description']}\n\n"
         f"📞 Тел: <code>{data['phone']}</code>\n"
         f"👤 Telegram: {tg}"
     )
 
-# --- ОБРОБНИКИ ЛОГІКИ ---
+# --- ОБРОБНИКИ ДІАЛОГУ ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚗 Вітаю!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
+    await update.message.reply_text("🚗 Вітаю в автоботі Одещини!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
     return ConversationHandler.END
 
 async def new_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data['photos'] = []
-    context.user_data['is_edit'] = False
-    await update.message.reply_text("Марка авто:", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Введіть марку авто (наприклад, Toyota):", reply_markup=ReplyKeyboardRemove())
     return MAKE
 
-async def step_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, key, next_st, msg, kb=None):
-    if update.message.text != "➡️ Залишити як є":
-        context.user_data[key] = update.message.text
-    markup = kb if kb else (ReplyKeyboardMarkup(SKIP_KEY, resize_keyboard=True) if context.user_data.get('is_edit') else ReplyKeyboardRemove())
-    await update.message.reply_text(msg, reply_markup=markup)
-    return next_st
+async def get_make(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['make'] = update.message.text
+    await update.message.reply_text("Введіть модель:")
+    return MODEL
 
-async def get_make(update: Update, context: ContextTypes.DEFAULT_TYPE): return await step_handler(update, context, 'make', MODEL, "Модель:")
-async def get_model(update: Update, context: ContextTypes.DEFAULT_TYPE): return await step_handler(update, context, 'model', YEAR, "Рік:")
-async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE): return await step_handler(update, context, 'year', GEARBOX, "КПП:", ReplyKeyboardMarkup([["Механіка", "Автомат"], ["➡️ Залишити як є"]], resize_keyboard=True))
-async def get_gearbox(update: Update, context: ContextTypes.DEFAULT_TYPE): return await step_handler(update, context, 'gearbox', FUEL, "Паливо:", ReplyKeyboardMarkup([["Бензин", "Дизель"], ["Газ/Бензин", "Електро"], ["➡️ Залишити як є"]], resize_keyboard=True))
-async def get_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE): return await step_handler(update, context, 'fuel', DRIVE, "Привід:", ReplyKeyboardMarkup([["Передній", "Задній", "Повний"]], resize_keyboard=True))
-async def get_drive(update: Update, context: ContextTypes.DEFAULT_TYPE): return await step_handler(update, context, 'drive', DISTRICT, "Район:", ReplyKeyboardMarkup([["Одеський", "Березівський"]], resize_keyboard=True))
-async def get_district(update: Update, context: ContextTypes.DEFAULT_TYPE): return await step_handler(update, context, 'district', TOWN, "Місто:")
-async def get_town(update: Update, context: ContextTypes.DEFAULT_TYPE): return await step_handler(update, context, 'town', PRICE, "Ціна ($):")
-async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE): return await step_handler(update, context, 'price', DESCRIPTION, "Опис:")
+async def get_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['model'] = update.message.text
+    await update.message.reply_text("Введіть рік випуску:")
+    return YEAR
+
+async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['year'] = update.message.text
+    await update.message.reply_text("Оберіть КПП:", reply_markup=ReplyKeyboardMarkup(GEARBOX_KEYS, resize_keyboard=True))
+    return GEARBOX
+
+async def get_gearbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['gearbox'] = update.message.text
+    await update.message.reply_text("Оберіть вид палива:", reply_markup=ReplyKeyboardMarkup(FUEL_KEYS, resize_keyboard=True))
+    return FUEL
+
+async def get_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['fuel'] = update.message.text
+    await update.message.reply_text("Оберіть привід:", reply_markup=ReplyKeyboardMarkup(DRIVE_KEYS, resize_keyboard=True))
+    return DRIVE
+
+async def get_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['drive'] = update.message.text
+    await update.message.reply_text("Оберіть район Одеської області:", reply_markup=ReplyKeyboardMarkup(DISTRICT_KEYS, resize_keyboard=True))
+    return DISTRICT
+
+async def get_district(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['district'] = update.message.text
+    await update.message.reply_text("Введіть населений пункт (місто/село):", reply_markup=ReplyKeyboardRemove())
+    return TOWN
+
+async def get_town(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['town'] = update.message.text
+    await update.message.reply_text("Введіть ціну в $:")
+    return PRICE
+
+async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['price'] = update.message.text
+    await update.message.reply_text("Введіть опис авто:")
+    return DESCRIPTION
 
 async def get_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text != "➡️ Залишити як є": context.user_data['description'] = update.message.text
-    await update.message.reply_text("Надішліть фото та натисніть /done (або кнопку нижче):", reply_markup=ReplyKeyboardMarkup(SKIP_KEY, resize_keyboard=True))
+    context.user_data['description'] = update.message.text
+    await update.message.reply_text("Надішліть фото (до 10 штук). Коли закінчите, натисніть /done або кнопку нижче:", 
+                                   reply_markup=ReplyKeyboardMarkup(SKIP_KEY, resize_keyboard=True))
     return PHOTOS
 
 async def get_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.photo: context.user_data['photos'].append(update.message.photo[-1].file_id)
+    if update.message.photo:
+        context.user_data['photos'].append(update.message.photo[-1].file_id)
     return PHOTOS
 
 async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Телефон:", reply_markup=ReplyKeyboardMarkup(SKIP_KEY, resize_keyboard=True))
+    await update.message.reply_text("Введіть номер телефону для зв'язку:", reply_markup=ReplyKeyboardRemove())
     return PHONE
 
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text != "➡️ Залишити як є": context.user_data['phone'] = update.message.text
-    await update.message.reply_text("Показувати Telegram?", reply_markup=ReplyKeyboardMarkup(YES_NO, resize_keyboard=True))
+    context.user_data['phone'] = update.message.text
+    await update.message.reply_text("Показувати ваше посилання на Telegram в оголошенні?", reply_markup=ReplyKeyboardMarkup(YES_NO, resize_keyboard=True))
     return SHOW_CONTACT
 
 async def get_tg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text != "➡️ Залишити як є": context.user_data['show_tg'] = update.message.text
+    context.user_data['show_tg'] = update.message.text
     context.user_data['username'] = update.effective_user.username
     summary = generate_summary(context.user_data)
     context.user_data['summary'] = summary
-    await update.message.reply_text(f"Прев'ю:\n\n{summary}\n\nОпублікувати?", reply_markup=ReplyKeyboardMarkup(YES_NO, resize_keyboard=True), parse_mode=ParseMode.HTML)
+    await update.message.reply_text(f"Ось ваше оголошення:\n\n{summary}\n\nОпублікувати?", reply_markup=ReplyKeyboardMarkup(YES_NO, resize_keyboard=True), parse_mode=ParseMode.HTML)
     return CONFIRM
 
 async def final_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -123,22 +162,28 @@ async def final_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.execute('INSERT INTO ads (user_id, msg_ids, details) VALUES (?, ?, ?)', (update.effective_user.id, m_ids, caption))
             conn.commit()
             conn.close()
-            await update.message.reply_text("✅ Опубліковано!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
+            await update.message.reply_text("✅ Опубліковано успішно!", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
         except Exception as e:
-            await update.message.reply_text(f"❌ Помилка: {e}")
+            await update.message.reply_text(f"❌ Помилка при публікації: {e}", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
+    else:
+        await update.message.reply_text("Публікацію скасовано.", reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
     return ConversationHandler.END
 
+# --- HEALTH CHECK SERVER ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is live")
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    HTTPServer(('0.0.0.0', port), HealthCheckHandler).serve_forever()
+
 # --- ЗАПУСК ---
-
-async def main():
+def main():
     init_db()
-
-    # Health Check для Render
-    def run_h():
-        port = int(os.environ.get("PORT", 8080))
-        server = HTTPServer(('0.0.0.0', port), lambda *args: None)
-        server.serve_forever()
-    threading.Thread(target=run_h, daemon=True).start()
+    threading.Thread(target=run_health_server, daemon=True).start()
 
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -166,17 +211,8 @@ async def main():
     app.add_handler(CommandHandler('start', start))
     app.add_handler(conv)
 
-    # Ініціалізація та очищення черги
-    await app.initialize()
-    await app.start()
-    
-    print("Бот запущений...")
-    await app.updater.start_polling(drop_pending_updates=True)
-    await asyncio.Event().wait()
+    print("Бот запущений через run_polling...")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        pass
-             
+    main()
